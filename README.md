@@ -17,5 +17,5 @@ Trained a BERT model for intent detection on CLINC150, including FastAPI API and
 [📂 code folder](./project3_intent_classification)
 
 ## 📄 Final Reports
-- [Internship Summary PDF](./reports/internship_summary.pdf)
+- [Internship Summary PDF](./Intern_Report.pdf)
 - [Presentation PPT](./Google_Summer_Intern_Report.pptx)
