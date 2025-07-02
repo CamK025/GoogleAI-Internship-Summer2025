@@ -1,257 +1,279 @@
 # NLP Intent Recognition Module Design and Evaluation Report
 
-## 目录
+## Table of Contents
 
-- [一、业务需求分析](#一业务需求分析)
-  - [1.1 业务背景与目标](#11-业务背景与目标)
-  - [1.2 模型选择论证](#12-模型选择论证)
-- [二、数据集](#二数据集)
-  - [2.1 数据集描述](#21-数据集描述)
-  - [2.2 预处理流程](#22-预处理流程)
-  - [2.3 文本数据匿名化与隐私保护技术研究](#23-文本数据匿名化与隐私保护技术研究)
-- [三、模型](#三模型)
-  - [3.1 TensorFlow Extended (TFX) 与 MLOps 初步调研](#31-tensorflow-extended-tfx-与-mlops-初步调研)
-    - [3.1.1 TFX 的核心价值](#311-tfx-的核心价值)
-    - [3.1.2 TFX 的关键组件](#312-tfx-的关键组件)
-    - [3.1.3 TFX 在 NLP 意图识别任务中的应用设想](#313-tfx-在-nlp-意图识别任务中的应用设想)
-  - [3.2 模型架构](#32-模型架构)
-  - [3.3 训练细节](#33-训练细节)
-- [四、性能评估](#四性能评估)
-  - [4.1 整体测试集性能评估](#41-整体测试集性能评估)
-  - [4.2 针对不同长度文本性能评估](#42-针对不同长度文本性能评估)
-  - [4.3 推理速度](#43-推理速度)
-- [五、模型封装和部署](#五模型封装和部署)
-  - [5.1 API设计文档初稿](#51-api设计文档初稿)
-  - [5.2 大规模部署的潜在优化点分析](#52-大规模部署的潜在优化点分析)
-  - [5.3 对模型偏见的初步检测和缓解策略思考](#53-对模型偏见的初步检测和缓解策略思考)
-
-
-## 一、业务需求分析
-
-### 1.1 业务背景与目标
-
-在谷歌提供的产品服务中，用户的自然语言输入存在多样性与不确定性。为了提升系统自动理解能力，需要构建一个意图识别模块，能够准确识别用户请求的核心意图，从而驱动后续的自动处理逻辑。
-
-该模块目标包括：
-- 高准确率识别常见用户意图
-- 具备可扩展性，支持未来业务的意图类别增加
-- 推理速度快，能部署在生产环境中
-
-### 1.2 模型选择论证
-
-本项目采用 Hugging Face Transformers 库中的 **BERT（Bidirectional Encoder Representations from Transformers）** 作为基础模型，并使用其 TensorFlow 版本 (`TFBertForSequenceClassification`) 进行下游微调。
-
-在初步调研中还评估了下列候选模型：
-
-| 模型         | 优点                 | 局限                          |
-|--------------|----------------------|-------------------------------|
-| DistilBERT   | 推理速度快，模型小   | 表达能力略弱于 BERT          |
-| ALBERT       | 参数共享，节省内存   | 收敛较慢，不适合小数据训练    |
-| RoBERTa      | 更强预训练，表现稳定 | 模型较大，训练成本高          |
-| TF-IDF + SVM | 实现简单，快速       | 泛化能力弱，适应性差          |
-
-最终选择 **BERT-Base（TensorFlow 版）**，作为功能与工程权衡后的首选模型，并为未来模型蒸馏与加速部署预留优化空间。
+- [1. Business Requirement Analysis](#1-business-requirement-analysis)  
+  - [1.1 Business Background and Objectives](#11-business-background-and-objectives)  
+  - [1.2 Model Selection Justification](#12-model-selection-justification)
+- [2. Dataset](#2-dataset)  
+  - [2.1 Dataset Description](#21-dataset-description)  
+  - [2.2 Preprocessing Workflow](#22-preprocessing-workflow)  
+  - [2.3 Text Anonymization and Privacy Protection Research](#23-text-anonymization-and-privacy-protection-research)  
+- [3. Model](#3-model)  
+  - [3.1 Preliminary Research on TensorFlow Extended (TFX) and MLOps](#31-preliminary-research-on-tensorflow-extended-tfx-and-mlops)  
+    - [3.1.1 Core Value of TFX](#311-core-value-of-tfx)  
+    - [3.1.2 Key TFX Components](#312-key-tfx-components)  
+    - [3.1.3 TFX Use Case for NLP Intent Classification](#313-tfx-use-case-for-nlp-intent-classification)  
+  - [3.2 Model Architecture](#32-model-architecture)  
+  - [3.3 Training Details](#33-training-details)  
+- [4. Performance Evaluation](#4-performance-evaluation)  
+  - [4.1 Overall Test Set Evaluation](#41-overall-test-set-evaluation)  
+  - [4.2 Evaluation by Input Length](#42-evaluation-by-input-length)  
+  - [4.3 Inference Speed](#43-inference-speed)  
+- [5. Model Packaging and Deployment](#5-model-packaging-and-deployment)  
+  - [5.1 API Design](#51-api-design)  
+  - [5.2 Optimization Strategies for Large-Scale Deployment](#52-optimization-strategies-for-large-scale-deployment)  
+  - [5.3 Preliminary Considerations for Bias Detection and Mitigation](#53-preliminary-considerations-for-bias-detection-and-mitigation)  
 
 ---
 
-## 二、数据集
+## 1. Business Requirement Analysis
 
-### 2.1 数据集描述
+### 1.1 Business Background and Objectives
 
-本项目采用 CLINC150 数据集中的 "plus" 版本，作为意图识别任务的基准数据源。该数据集是面向真实用户场景构建的自然语言理解（NLU）资源，模拟了银行、电商、旅行等多个实际场景中用户的查询请求。
+In Google's product ecosystem, user input in natural language can be highly diverse and ambiguous. To improve the system's ability to automatically understand user queries, we aim to build an **intent classification module** capable of accurately identifying user intent and triggering the correct downstream automation logic.
 
-| 数据子集 | 样本数量 | 类别数 | 单个类别样本数量 |
-|----------|----------|--------|------------------|
-| 训练集   | 15,250    | 151    | 100（250）       |
-| 验证集   | 3,100     | 151    | 20（100）        |
-| 测试集   | 5,500     | 151    | 30（1000）       |
+Key goals of the module include:
+- High accuracy in identifying common user intents
+- Scalability to support future intent categories
+- Fast inference speed suitable for production deployment
 
-### 2.2 预处理流程
+### 1.2 Model Selection Justification
 
-1. **载入数据**  
-   使用 `datasets` 库加载 CLINC150 (plus) 数据集。由于 intent 为 42 的数据量相较其余 label 明显不平衡，因此删除 intent 为 42 的全部数据。最终数据集为 150 个标签。
+This project adopts **BERT (Bidirectional Encoder Representations from Transformers)** from Hugging Face Transformers, using its TensorFlow version (`TFBertForSequenceClassification`) for downstream fine-tuning.
 
-2. **Tokenizer 编码**  
-   使用 Hugging Face 的 `AutoTokenizer` 加载 `bert-base-uncased` 的预训练分词器，对输入文本进行：
-   - WordPiece 编码
-   - 最大长度截断：`max_length=32`
-   - Padding 统一对齐
+In the initial research phase, the following candidate models were also evaluated:
 
-3. **转换为 TensorFlow Dataset**  
-   使用 `to_tf_dataset()` 将 `DatasetDict` 转换为 `tf.data.Dataset`，便于后续微调模型训练。
+| Model         | Pros                             | Limitations                            |
+|---------------|----------------------------------|-----------------------------------------|
+| DistilBERT    | Fast inference, smaller size     | Slightly weaker than BERT in accuracy   |
+| ALBERT        | Parameter sharing, memory efficient | Slower convergence, less ideal for small datasets |
+| RoBERTa       | Strong pretraining, stable results | Larger size, higher training cost       |
+| TF-IDF + SVM  | Simple and fast implementation   | Weak generalization and poor adaptability |
 
-### 2.3 文本数据匿名化与隐私保护技术研究
+**Final choice**: **BERT-Base (TensorFlow version)** is selected as the optimal balance between performance and engineering cost. The system design also leaves room for future optimization through **model distillation** and **accelerated deployment**.
 
-在由用户生成内容组成的数据集中，存在大量潜在的敏感信息，如姓名、地址、手机号、健康状况等。通过文本数据匿名化实现对用户隐私的保护是构建可信 AI 系统的关键步骤。
-
-#### 2.3.1 文本匿名化（Text Anonymization / PII Removal）
-
-文本匿名化是指检测并移除文本中的个人可识别信息（PII, Personally Identifiable Information），如人名、地点、电话号码、身份证号等。
-常见方式包括：
-
-- NER（命名实体识别）+ 替换：使用 NER 模型（如 spaCy、Stanza、BERT-NER）检测实体，然后用占位符替换：
-- 正则表达式 + 黑名单：用规则识别邮箱、手机号、URL、信用卡号等结构化敏感信息。
-
-该方法可在不影响语义结构的前提下，清除明确敏感内容。易于部署，可用于训练数据共享、模型微调等预处理环节。
-
-#### 2.3.2 差分隐私（Differential Privacy in NLP）
-
-差分隐私是一种添加噪声保护机制，使攻击者无法从模型输出中还原或推断单个训练样本是否存在。用于防止“模型记忆”某些敏感文本。
-常见方式包括：
-
-- 训练阶段加入噪声梯度（DP-SGD）：使用差分隐私随机梯度下降（Differentially Private SGD），在训练时对梯度裁剪 + 添加噪声。
-- 私有语言建模（Private BERT/LMs）：使用 Google 的 Opacus 和 TensorFlow Privacy 工具包在 NLP 模型中实现差分隐私训练。
-
-该方法使得即使模型被公开或查询，仍难以恢复原始用户数据，可防止训练数据泄漏。适用于聊天记录、电子病历、搜索日志等高度敏感文本建模。
 
 ---
 
-## 三、模型
+## 2. Dataset
 
-### 3.1 TensorFlow Extended (TFX) 与 MLOps 初步调研
+### 2.1 Dataset Description
 
-TensorFlow Extended (TFX) 是 Google 开源的 端到端机器学习平台，旨在将 ML 模型从开发阶段推向生产部署，并实现持续训练、自动验证与监控。它是 Google 内部使用的 MLOps 工具链的外部版本，支持高度自动化、可扩展、可重复的模型生命周期管理。
+This project uses the **"plus" version of the CLINC150 dataset** as the benchmark for intent classification. The dataset is designed for real-world NLU (Natural Language Understanding) applications, simulating user queries in domains such as banking, e-commerce, travel, etc.
 
-#### 3.1.1 TFX 的核心价值
+| Subset     | #Samples | #Classes | Samples per Class         |
+|------------|----------|----------|---------------------------|
+| Train      | 15,250   | 151      | 100 (250 for intent 42)   |
+| Validation | 3,100    | 151      | 20 (100 for intent 42)    |
+| Test       | 5,500    | 151      | 30 (1,000 for intent 42)  |
 
-- TensorFlow Extended（TFX）在机器学习系统化构建中具备高度的自动化与可重复性，能够将 ML 工作流程拆解为标准化的可组合组件，实现从训练到验证再到部署的完整流水线。
-- 它内置模型质量保障机制，例如自动的数据验证和模型性能对比，能有效防止模型因数据漂移而性能下降。
-- TFX 原生支持大规模生产环境的部署，能够无缝集成至 Google Cloud（如 Vertex AI Pipelines）或 KubeFlow 等工业级平台。
-- TFX 也持持续训练与更新，包括定期调度重训练、模型版本控制及 A/B 测试等运维功能。
-- 其框架允许集成脱敏处理、审核流程等安全与合规机制，帮助满足企业级 AI 应用在数据隐私与发布安全方面的严格需求。
+### 2.2 Preprocessing Workflow
 
-#### 3.1.2 TFX 的关键组件
+1. **Data Loading**  
+   We load the CLINC150 (plus) dataset using the `datasets` library. Since class `intent=42` is highly imbalanced compared to others, we remove all samples with this label. The resulting dataset contains **150 intent classes**.
 
-| 组件名           | 作用与说明                                  |
-|------------------|---------------------------------------------|
-| ExampleGen       | 读取原始数据源（CSV/TFRecord/BigQuery）     |
-| StatisticsGen    | 自动生成数据统计特征                        |
-| SchemaGen        | 推断数据 schema（类型/范围/缺失值）         |
-| ExampleValidator | 检测数据异常                                |
-| Transform        | 做特征工程（如标准化、嵌入编码）            |
-| Trainer          | 定义并训练 TensorFlow 模型                  |
-| Evaluator        | 模型指标评估                                |
-| Pusher           | 部署模型到生产环境                          |
+2. **Tokenizer Encoding**  
+   Use Hugging Face's `AutoTokenizer` with `bert-base-uncased` to tokenize input text:
+   - WordPiece encoding  
+   - Truncation to `max_length=32`  
+   - Padding to ensure uniform input shapes
 
-#### 3.1.3 TFX 在 NLP 意图识别任务中的应用设想
+3. **Convert to TensorFlow Dataset**  
+   Use `to_tf_dataset()` to convert the `DatasetDict` into a `tf.data.Dataset`, which is then used for model fine-tuning.
 
-在本次基于 BERT 实现的意图识别服务中，TFX 能在训练和评估阶段提供重要支持。
+### 2.3 Text Anonymization and Privacy Protection Research
 
-- **数据处理：**
-  - 可以使用 `ExampleGen` 组件读取 CLINC150 数据集中的意图分类样本；使用 `StatisticsGen` 和 `ExampleValidator` 检查数据分布与标签偏移问题，以保证训练样本的质量；使用`Transform` 实现文本归一化、分词等预处理步骤
-- **模型训练：**
-  - 可以使用 `Trainer` 微调 `TFBertForSequenceClassification` 模型。
-- **模型评估：**
-  - 可以使用 `Evaluator` 设置准确率和 F1-score 等指标，与历史模型进行比较，从而判断新模型性能。
-- **模型部署：**
-  - `Pusher` 可将模型部署至 TensorFlow Serving 或 Vertex AI Prediction，提供推理服务。配合持续集成机制，还可以将每日收集到的用户数据用于模型再训练，并在通过自动评估后更新版本。
+User-generated datasets often contain sensitive information such as names, addresses, phone numbers, and health status. Text anonymization is crucial for building **trustworthy AI systems**.
 
-不过，由于 TFX 在 Windows 系统上功能受限（完整支持需 Linux 环境），因此当前项目主要采用 TensorFlow + HuggingFace + FastAPI 实现，TFX 的集成将在未来部署阶段逐步考虑。
+#### 2.3.1 Text Anonymization / PII Removal
 
+PII anonymization refers to identifying and removing **personally identifiable information** such as names, locations, phone numbers, and IDs.
 
-### 3.2 模型架构
+Common methods:
+- **NER + Replacement**: Use NER models (spaCy, Stanza, BERT-NER) to detect entities, then replace them with placeholders.
+- **Regex + Blacklist**: Identify structured PII like emails, phone numbers, URLs using patterns.
 
-本系统采用 Hugging Face 提供的 `TFBertForSequenceClassification`，基于 `bert-base-uncased` 模型，在其顶部添加线性分类层（softmax）：
+These approaches preserve sentence structure while removing sensitive content, and are easy to deploy for shared datasets and model fine-tuning.
 
-- **Encoder：** 12层 Transformer 编码器（110M 参数量）
-- **Pooling：** 使用 `[CLS]` token 输出
-- **Classifier：** 全连接层输出 `num_labels` 维度的 logits
+#### 2.3.2 Differential Privacy in NLP
 
-输出层为未归一化的 logits，用于 `SparseCategoricalCrossentropy(from_logits=True)` 损失函数计算。
+Differential privacy (DP) adds **noise to training** to prevent attackers from determining whether a specific user sample was used. It protects against memorization in models.
 
+Techniques:
+- **DP-SGD**: Add noise and apply gradient clipping during training using tools like **Opacus** or **TensorFlow Privacy**.
+- **Private Language Modeling**: Differential privacy in models like BERT, ensuring no user data leakage even if the model is exposed.
 
-### 3.3 训练细节
-
-| 项目             | 参数                       |
-|------------------|----------------------------|
-| 微调框架         | Hugging Face Transformers + TensorFlow |
-| 预训练模型       | `bert-base-uncased`        |
-| 学习率           | 5e-5                       |
-| 批大小           | 32                         |
-| 最大长度         | 32                         |
-| 训练周期         | 最多 100，早停策略         |
-| Early Stopping 策略 | 验证集 5 轮未提升停止    |
-| 优化器           | AdamW + warmup             |
-| Warmup 步数      | 总步数的 10%               |
+DP is especially useful for sensitive corpora like chat logs, medical records, and search histories.
 
 ---
 
-## 四、性能评估
+## 3. Model
+
+### 3.1 Preliminary Research on TensorFlow Extended (TFX) and MLOps
+
+**TensorFlow Extended (TFX)** is Google's open-source end-to-end machine learning platform designed to transition ML models from development to production, supporting continuous training, automatic validation, and monitoring. It is the external version of Google's internal MLOps toolchain and enables scalable, automated, and repeatable ML lifecycle management.
+
+#### 3.1.1 Core Value of TFX
+
+- TFX enables highly automated and reproducible pipelines by breaking down ML workflows into modular, composable components—from training to validation and deployment.
+- It includes built-in model quality assurance tools (e.g., automatic data validation and model comparison), helping prevent performance degradation due to data drift.
+- TFX supports production-scale deployment and integrates seamlessly with **Google Cloud (e.g., Vertex AI Pipelines)** and platforms like **Kubeflow**.
+- It supports **continual training**, model versioning, and **A/B testing**, aiding long-term operations.
+- The framework also allows integration with **privacy protection** and **review pipelines**, helping enterprises meet compliance and safety requirements for AI deployment.
+
+#### 3.1.2 Key TFX Components
+
+| Component         | Description                                                  |
+|-------------------|--------------------------------------------------------------|
+| `ExampleGen`      | Reads raw data sources (CSV, TFRecord, BigQuery, etc.)       |
+| `StatisticsGen`   | Automatically generates feature statistics                    |
+| `SchemaGen`       | Infers data schema (type, range, missing values)             |
+| `ExampleValidator`| Detects anomalies in the dataset                              |
+| `Transform`       | Applies feature engineering (e.g., normalization, tokenization)|
+| `Trainer`         | Defines and trains a TensorFlow model                         |
+| `Evaluator`       | Evaluates model performance based on metrics                  |
+| `Pusher`          | Deploys the model to production environments                  |
+
+#### 3.1.3 TFX Use Case for NLP Intent Classification
+
+In the intent recognition system built with BERT, TFX can support training and evaluation workflows:
+
+- **Data Processing:**
+  - Use `ExampleGen` to load intent classification data (e.g., CLINC150 dataset); 
+  - Use `StatisticsGen` and `ExampleValidator` to check label distribution and feature quality;
+  - Use `Transform` to perform text normalization, tokenization, etc.
+
+- **Model Training:**
+  - Use `Trainer` to fine-tune the `TFBertForSequenceClassification` model.
+
+- **Model Evaluation:**
+  - Use `Evaluator` to compute accuracy and F1-score, and compare with previous models.
+
+- **Model Deployment:**
+  - Use `Pusher` to deploy the model to TensorFlow Serving or Vertex AI Prediction.
+  - Coupled with CI/CD pipelines, user data collected daily can be used for retraining, and model versions can be updated after passing evaluation.
+
+>  Note: Since TFX has limited support on Windows (full functionality requires Linux), this project currently uses **TensorFlow + HuggingFace + FastAPI**, and TFX integration will be considered in the deployment phase.
+
+### 3.2 Model Architecture
+
+The system uses Hugging Face’s `TFBertForSequenceClassification` based on the `bert-base-uncased` model, with a softmax classification layer on top.
+
+- **Encoder**: 12-layer Transformer encoder (110M parameters)  
+- **Pooling**: Use the `[CLS]` token’s output  
+- **Classifier**: Fully connected layer projecting to `num_labels` logits
+
+The output layer produces unnormalized logits, and the loss is computed using:
+
+```python
+loss_fn = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
+```
+
+### 3.3 Training Details
+
+| Parameter               | Value                                     |
+|--------------------------|-------------------------------------------|
+| Fine-tuning Framework    | Hugging Face Transformers + TensorFlow   |
+| Pretrained Model         | `bert-base-uncased`                      |
+| Learning Rate            | 5e-5                                     |
+| Batch Size               | 32                                       |
+| Max Sequence Length      | 32                                       |
+| Training Epochs          | Up to 100 with early stopping            |
+| Early Stopping Strategy  | Stop if no validation improvement after 5 epochs |
+| Optimizer                | AdamW with warmup                        |
+| Warmup Steps             | 10% of total steps                       |
+
+---
+
+## 4. Performance Evaluation
 
 <div align="center">
-  <img src="training_vs_val_loss.png" width="70%" alt="Figure 1 - Train and validition loss"><br>
-  <b>Figure 1:</b> Training and Valdition Loss
+  <img src="training_vs_val_loss.png" width="70%" alt="Figure 1 - Train and Validation Loss"><br>
+  <b>Figure 1:</b> Training and Validation Loss
 </div>
 
-epoch 5 之后出现了明显的过拟合现象，验证损失停止改善，而训练损失继续减少。
+After epoch 5, a clear overfitting phenomenon emerged: validation loss stopped improving while training loss continued to decrease.
 
-### 4.1 整体测试集性能评估
+### 4.1 Overall Test Set Evaluation
 
-| metric   | micro / overall | macro avg | weighted avg |
-|----------|------------------|-----------|--------------|
-| Accuracy | 0.959 (95.9%)     | —         | —            |
-| Precision | —               | 0.961     | 0.961        |
-| Recall    | —               | 0.959     | 0.959        |
-| F1-score  | —               | 0.959     | 0.959        |
+| Metric    | Micro / Overall | Macro Avg | Weighted Avg |
+|-----------|------------------|------------|----------------|
+| Accuracy  | 0.959 (95.9%)    | —          | —              |
+| Precision | —                | 0.961      | 0.961          |
+| Recall    | —                | 0.959      | 0.959          |
+| F1-Score  | —                | 0.959      | 0.959          |
 
-从整体测试集单类测试结果可以看出，150 类全部达到高一致性。只有极少数类别（如 id = 68、89、150）出现 F1≈0.87~0.89，处于可接受区间内。模型微调结果基本上满足了工业中大部分意图识别需要，对于少数类别后续可通过 focal-loss 或重采样进一步提升效果。
+The evaluation shows strong consistency across all 150 intent classes. Only a few classes (e.g., ID = 68, 89, 150) have F1-scores around 0.87–0.89, which is still acceptable. The fine-tuned model satisfies most industrial requirements for intent classification. For underperforming classes, further improvements could be made using **focal loss** or **resampling techniques**.
 
-### 4.2 针对不同长度文本性能评估
+### 4.2 Evaluation by Input Length
 
-| Bucket         | 样本数 | Accuracy | Macro F1 |
-|----------------|--------|----------|----------|
-| Short (≤5词)   | 881    | 97.0%    | 0.943    |
-| Medium (6-12词)| 3,190  | 95.7%    | 0.956    |
-| Long (>12词)   | 429    | 95.3%    | 0.890    |
+| Bucket           | Sample Count | Accuracy | Macro F1 |
+|------------------|---------------|----------|----------|
+| Short (≤ 5 words) | 881           | 97.0%    | 0.943    |
+| Medium (6–12)     | 3,190         | 95.7%    | 0.956    |
+| Long (> 12)       | 429           | 95.3%    | 0.890    |
 
-结果可以看出，模型对短句最为稳定，准确率达到了97%。长句略有下降，但准确率仍 > 95 %。后续可考虑将 max_length 提升至 64，并用 text‐span truncation + sliding window 技巧处理极长输入。也可以更换复杂模型减少模型本身对长句的敏感度。
+The model performs most stably on short inputs with 97% accuracy. Long inputs show a slight drop but remain above 95%. Further improvements could involve:
+- Increasing `max_length` to 64
+- Applying **text-span truncation** or **sliding window strategies**
+- Using a more robust model that handles long inputs better
 
-### 4.3 推理速度
+### 4.3 Inference Speed
 
-- 输入文本："how do I cancel my order"
-- 重复次数：100 次
-- **平均推理时间：≈ 102.07 ms/sample**
+- Input: `"how do I cancel my order"`
+- Repeated: 100 times
+- **Average inference time: ≈ 102.07 ms/sample**
 
 ---
 
-## 五、模型封装和部署
+## 5. Model Packaging and Deployment
 
-### 5.1 API设计文档初稿
+### 5.1 API Design
 
-| 项目         | 说明                                     |
-|--------------|------------------------------------------|
-| 服务基址     | `https://<your-domain>/v1`               |
-| 资源名       | `intents`                                |
-| 主要端点     | `POST /v1/intents:predict`               |
-| 协议         | HTTPS + JSON (UTF-8)                     |
-| 错误模型     | `google.rpc.Status`                      |
-| 实现         | 详见 `app.py` 和 OpenAPI `.yaml` 文件   |
+| Field         | Description                                      |
+|---------------|--------------------------------------------------|
+| Base URL      | `https://<your-domain>/v1`                       |
+| Resource Name | `intents`                                        |
+| Main Endpoint | `POST /v1/intents:predict`                       |
+| Protocol      | HTTPS + JSON (UTF-8)                             |
+| Error Model   | `google.rpc.Status`                              |
+| Implementation | Refer to `app.py` and OpenAPI `.yaml` file     |
 
-### 5.2 大规模部署的潜在优化点分析
+ ### 5.2 Optimization Strategies for Large-Scale Deployment
 
-在原型阶段，测得平均推理延迟约 102 ms／样本，这对于低 QPS 场景已经可接受。但一旦面向谷歌级别的在线服务，吞吐、成本与弹性就成为核心考量。因此，进一步优化包括：
+The prototype system shows an average latency of ~102 ms/sample, which is acceptable for low-QPS settings. For production-scale services at Google-level scale, improvements in throughput, cost, and scalability are essential.
 
-- **模型结构优化：**
-  - 使用 DistilBERT、TinyBERT 蒸馏模型替代 BERT-base
-- **推理引擎优化：**
-  - 将 TensorFlow 模型导出为 ONNX 格式
-  - 使用 ONNX Runtime 或 TensorRT 加速执行
-- **部署层优化：**
-  - 启用 XLA 编译或 TF-TRT 混合精度（FP16/INT8）
-  - 利用动态批处理、异步推理、自动弹性伸缩提高吞吐
+**Model Optimization:**
+- Replace BERT-base with lighter distilled models such as **DistilBERT** or **TinyBERT**
 
-### 5.3 对模型偏见的初步检测和缓解策略思考
+**Inference Engine Optimization:**
+- Convert TensorFlow model to **ONNX**
+- Accelerate using **ONNX Runtime** or **TensorRT**
 
-此数据集CLINC150 本身经过均衡采样，在预处理后做到了所有类别均匀分布，因此在话题维度方面模型对表面特征尚无明显偏差。但在真实应用中，用户输入会呈现地域、性别等多维分布。因此可通过替换敏感词，根据Embedding Association Test (EAT) 或 SEAT 基准观察模型是否对特定群体或词汇产生系统性偏差。
+**Deployment Optimization:**
+- Enable **XLA compilation** or **TF-TRT** with mixed precision (FP16/INT8)
+- Use **dynamic batching**, **async inference**, and **autoscaling**
 
-针对于模型部分：
 
-- **数据增强：**
-  - 可通过回译、同义替换与过采样为弱势子群体扩充样本。
-- **训练调控：**
-  - 可采用重加权或对抗式去偏技术，让模型在保持整体性能的同时降低对敏感特征的依赖。
-- **推理控制：**
-  - 可以用阈值校准或置信度惩罚的方式，对误报率较高的子群体进行“软保护”。
-- **偏差监控：**
-  - 在 MLOps 中加入在线偏差检测与指标告警触发机制，从而控制潜在的偏差风险。
+### 5.3 Preliminary Considerations for Bias Detection and Mitigation
+
+The CLINC150 dataset is balanced and uniformly distributed post-preprocessing, showing no obvious surface-level topic bias. However, real-world inputs exhibit diversity in region, gender, and other dimensions.
+
+**Bias Detection:**
+- Use **Embedding Association Test (EAT)** or **SEAT benchmarks** to identify potential systematic bias
+
+**Bias Mitigation Strategies:**
+
+- **Data Augmentation:**
+  - Use back-translation, synonym replacement, or oversampling for underrepresented groups
+
+- **Training Adjustment:**
+  - Apply **re-weighting** or **adversarial debiasing** to reduce reliance on sensitive features
+
+- **Inference Control:**
+  - Apply **confidence thresholding** or **penalized calibration** to softly protect vulnerable groups
+
+- **Monitoring:**
+  - Integrate **online bias detection** and alerting into the MLOps pipeline to manage long-term risks
 
