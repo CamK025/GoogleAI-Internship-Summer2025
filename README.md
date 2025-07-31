@@ -14,7 +14,7 @@ Built a CLIP-based retrieval system using Open Images V7 and Localized Narrative
 
 ### 🔹 Project 3: NLP Intent Classification with Transformers
 Trained a BERT model for intent detection on CLINC150, including FastAPI API and privacy exploration.
-[📂 code folder](./project3_intent_classification)
+[📂 code folder](./project3_intent_recognition)
 
 ## 📄 Final Reports
 - [Internship Summary](./Internship_Summary.pdf)
